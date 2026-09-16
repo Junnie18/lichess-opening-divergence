@@ -63,6 +63,28 @@ def test_query_raises_auth_error_on_401_with_token(tmp_path):
 
 
 @responses.activate
+def test_lichess_helper_passes_since_until_for_time_window_splits(tmp_path):
+    payload = {"white": 1, "draws": 1, "black": 1, "moves": []}
+    responses.add(responses.GET, "https://explorer.lichess.org/lichess", json=payload, status=200)
+    client = ExplorerClient(token="t", cache_dir=tmp_path, min_interval=0)
+    client.lichess(play="e2e4", speeds=["blitz"], ratings=[1600], since="2018-01", until="2023-12")
+    sent_params = responses.calls[0].request.params
+    assert sent_params["since"] == "2018-01"
+    assert sent_params["until"] == "2023-12"
+
+
+@responses.activate
+def test_lichess_helper_omits_since_until_when_not_given(tmp_path):
+    payload = {"white": 1, "draws": 1, "black": 1, "moves": []}
+    responses.add(responses.GET, "https://explorer.lichess.org/lichess", json=payload, status=200)
+    client = ExplorerClient(token="t", cache_dir=tmp_path, min_interval=0)
+    client.lichess(play="e2e4")
+    sent_params = responses.calls[0].request.params
+    assert "since" not in sent_params
+    assert "until" not in sent_params
+
+
+@responses.activate
 def test_query_retries_on_429_then_succeeds(tmp_path):
     payload = {"white": 1, "draws": 1, "black": 1, "moves": []}
     responses.add(

@@ -159,8 +159,14 @@ class ExplorerClient:
         moves: int = 12,
         top_games: int = 0,
         recent_games: int = 0,
+        since: str | None = None,
+        until: str | None = None,
         use_cache: bool = True,
     ) -> dict:
+        """``since``/``until`` are "YYYY-MM" month strings (API default
+        range is 1952-01 to 3000-12, i.e. unbounded); used to carve the
+        discovery/validation time windows for out-of-sample validation --
+        see scripts/collect_data.py."""
         params: dict[str, Any] = {
             "variant": variant,
             "play": play,
@@ -172,6 +178,10 @@ class ExplorerClient:
             params["speeds"] = ",".join(speeds)
         if ratings:
             params["ratings"] = ",".join(str(r) for r in ratings)
+        if since:
+            params["since"] = since
+        if until:
+            params["until"] = until
         return self.query("lichess", params, use_cache=use_cache)
 
     def masters(
@@ -179,7 +189,13 @@ class ExplorerClient:
         play: str = "",
         moves: int = 12,
         top_games: int = 0,
+        since: str | None = None,
+        until: str | None = None,
         use_cache: bool = True,
     ) -> dict:
-        params = {"play": play, "moves": moves, "topGames": top_games}
+        params: dict[str, Any] = {"play": play, "moves": moves, "topGames": top_games}
+        if since:
+            params["since"] = since
+        if until:
+            params["until"] = until
         return self.query("masters", params, use_cache=use_cache)
