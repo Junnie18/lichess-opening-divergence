@@ -5,7 +5,12 @@ import responses
 from opening_divergence.client import ExplorerAuthError, ExplorerClient
 
 
-def test_query_raises_auth_error_without_token(tmp_path):
+def test_query_raises_auth_error_without_token(tmp_path, monkeypatch):
+    # load_dotenv() in client.py pulls LICHESS_TOKEN from the real .env into
+    # os.environ at import time; explicitly clear it so this test exercises
+    # the "no token available at all" path regardless of the dev machine's
+    # .env contents.
+    monkeypatch.delenv("LICHESS_TOKEN", raising=False)
     client = ExplorerClient(token=None, cache_dir=tmp_path)
     try:
         client.query("lichess", {"play": "e2e4"})

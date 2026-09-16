@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_BASE_URL = "https://explorer.lichess.org"
 TOKEN_HELP_URL = "https://lichess.org/account/oauth/token"
