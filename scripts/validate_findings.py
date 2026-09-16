@@ -37,18 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from opening_divergence.stats import MoveOutcome, benjamini_hochberg, bootstrap_score_difference  # noqa: E402
-
-
-def build_node_index(nodes: list[dict]) -> dict[tuple, dict]:
-    return {tuple(n["path_uci"]): n for n in nodes}
-
-
-def outcome_from_band_dict(node: dict, speed: str, window: str, band: str, uci: str) -> MoveOutcome | None:
-    d = node.get("lichess", {}).get(speed, {}).get(window, {}).get(band, {}).get(uci)
-    if d is None:
-        return None
-    return MoveOutcome(label=d["san"], wins=d["wins"], draws=d["draws"], losses=d["losses"])
+from opening_divergence.stats import benjamini_hochberg, bootstrap_score_difference  # noqa: E402
+from opening_divergence.validate import build_node_index, outcome_from_band_dict  # noqa: E402
 
 
 def main() -> int:
