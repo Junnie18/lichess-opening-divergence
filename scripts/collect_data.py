@@ -227,8 +227,11 @@ def main() -> int:
 
         masters = None
         if not args.skip_masters:
+            # /masters' since/until are YEAR integers (e.g. 2016), unlike
+            # /lichess' "YYYY-MM" month strings -- confirmed against the
+            # live API spec after it 400'd on a month string.
             data = client.masters(
-                play=play, moves=MOVES_PER_QUERY, since=DISCOVERY_SINCE, until=VALIDATION_UNTIL
+                play=play, moves=MOVES_PER_QUERY, since=DISCOVERY_SINCE[:4], until=VALIDATION_UNTIL[:4]
             )
             masters = moves_dict(data)
 
