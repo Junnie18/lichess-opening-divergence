@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Divergence analysis over the opening tree collected by collect_data.py.
+"""Discovery-window divergence analysis: builds the full family of
+"is move A better than move B" comparisons (best-move shifts across rating
+bands, popular-vs-better-move gaps, masters-vs-Lichess-pool divergence),
+computes a bootstrap p-value for every one of them, and applies a SINGLE
+Benjamini-Hochberg FDR correction across the entire family (see
+opening_divergence.stats.benjamini_hochberg for why: running hundreds of
+comparisons at raw alpha=0.05 guarantees a fistful of false positives even
+under a true null everywhere).
 
-For every tree node (a position reached by a specific move sequence),
-compares the empirical score (White's expected points per game) of each
-candidate reply across rating bands, and flags:
+This script ONLY looks at the discovery window. Findings that survive FDR
+correction here are candidates for two further checks that live in their
+own scripts (kept separate because they use different data / a different
+family of tests, not because they're less important):
 
-  1. Positions where the *confidently-best* move (score-ranked, subject to
-     --min-games) differs between the lowest and highest rating band with
-     enough data -- "does the best move change with rating?"
-  2. Positions where the *most popular* move in a band is not the
-     best-scoring one, and the gap is large enough to be statistically
-     significant -- "book move that underperforms."
-  3. Positions where the masters' most-played move's score at the lowest
-     Lichess band diverges sharply from its score at the highest band --
-     "does master theory hold up in the lower-rated pool?"
-
-Writes a JSON of all findings plus a generated Markdown report with
-concrete tables (used as the data backing docs/findings.md).
+    scripts/validate_findings.py   -- out-of-sample replication in the
+                                       validation window (the centerpiece
+                                       check)
+    scripts/cross_speed_check.py   -- does it hold in rapid/classical too?
 
 Usage:
     python scripts/analyze_divergence.py \
         [--tree data/processed/opening_tree.json] \
-        [--json-out data/processed/divergence_findings.json] \
-        [--md-out docs/findings_generated.md]
+        [--json-out data/processed/discovery_findings.json] \
+        [--min-games N]  # default: power-calculation-derived MIN_SAMPLE_SIZE
 """
 
 from __future__ import annotations
@@ -34,13 +34,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from opening_divergence.divergence import (  # noqa: E402
-    analyze_best_move_shift,
-    analyze_master_theory,
-    analyze_popularity_gap,
-    render_markdown,
-)
-from opening_divergence.stats import MIN_SAMPLE_SIZE  # noqa: E402
+from opening_divergence.divergence import build_finding_family  # noqa: E402
+from opening_divergence.stats import MIN_SAMPLE_SIZE, benjamini_hochberg  # noqa: E402
+
+
+def finding_to_dict(f, adjusted_p: float, fdr_significant: bool) -> dict:
+    return {
+        "kind": f.kind,
+        "path_san": f.path_san,
+        "path_uci": f.path_uci,
+        "speed": f.speed,
+        "window": f.window,
+        "band_a": f.band_a,
+        "band_b": f.band_b,
+        "a_uci": f.a_uci,
+        "a": f.a,
+        "b_uci": f.b_uci,
+        "b": f.b,
+        "observed_diff": f.bootstrap.observed_diff,
+        "ci_lo": f.bootstrap.ci_lo,
+        "ci_hi": f.bootstrap.ci_hi,
+        "raw_p_value": f.raw_p_value,
+        "fdr_adjusted_p_value": adjusted_p,
+        "raw_significant": f.raw_p_value < 0.05,
+        "fdr_significant": fdr_significant,
+        "detail": f.detail,
+    }
 
 
 def main() -> int:
@@ -48,18 +67,15 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--tree", default="data/processed/opening_tree.json")
-    parser.add_argument("--json-out", default="data/processed/divergence_findings.json")
-    parser.add_argument("--md-out", default="docs/findings_generated.md")
+    parser.add_argument("--json-out", default="data/processed/discovery_findings.json")
     parser.add_argument("--min-games", type=int, default=MIN_SAMPLE_SIZE)
+    parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument("--n-boot", type=int, default=10000)
     args = parser.parse_args()
 
     tree_path = Path(args.tree)
     if not tree_path.exists():
-        print(
-            f"{tree_path} not found. Run scripts/collect_data.py first "
-            "(requires LICHESS_TOKEN -- see README).",
-            file=sys.stderr,
-        )
+        print(f"{tree_path} not found. Run scripts/collect_data.py first.", file=sys.stderr)
         return 1
 
     with open(tree_path, encoding="utf-8") as f:
@@ -67,44 +83,61 @@ def main() -> int:
 
     speed = tree["primary_speed"]
     rating_bands = tree["rating_bands"]
-    nodes = tree["nodes"][speed]
-
-    best_move_shifts = []
-    popularity_gaps = []
-    master_theory = []
-    for node in nodes:
-        shift = analyze_best_move_shift(node, rating_bands, args.min_games)
-        if shift:
-            best_move_shifts.append(shift)
-        popularity_gaps.extend(analyze_popularity_gap(node, rating_bands, args.min_games))
-        theory = analyze_master_theory(node, rating_bands, args.min_games)
-        if theory:
-            master_theory.append(theory)
-
-    findings = {
-        "tree_generated_at": tree["generated_at"],
-        "speed": speed,
-        "rating_bands": rating_bands,
-        "min_sample_size": args.min_games,
-        "nodes_analyzed": len(nodes),
-        "best_move_shifts": best_move_shifts,
-        "popularity_gaps": popularity_gaps,
-        "master_theory": master_theory,
-    }
-
-    json_out = Path(args.json_out)
-    json_out.parent.mkdir(parents=True, exist_ok=True)
-    with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(findings, f, indent=2)
-
-    md_out = Path(args.md_out)
-    md_out.parent.mkdir(parents=True, exist_ok=True)
-    md_out.write_text(render_markdown(findings), encoding="utf-8")
+    nodes = tree["nodes"]
 
     print(
-        f"Analyzed {len(nodes)} nodes: {len(best_move_shifts)} best-move shifts, "
-        f"{len(popularity_gaps)} popularity gaps, {len(master_theory)} master-theory comparisons.\n"
-        f"Wrote {json_out} and {md_out}.",
+        f"Building discovery-window finding family over {len(nodes)} positions, "
+        f"speed={speed}, min_games={args.min_games}...",
+        file=sys.stderr,
+    )
+    findings = build_finding_family(
+        nodes, rating_bands, args.min_games, speed, "discovery", n_boot=args.n_boot
+    )
+    print(f"{len(findings)} raw comparisons found.", file=sys.stderr)
+
+    p_values = [f.raw_p_value for f in findings]
+    reject, adjusted = benjamini_hochberg(p_values, alpha=args.alpha)
+
+    findings_out = [finding_to_dict(f, adj, rej) for f, adj, rej in zip(findings, adjusted, reject)]
+    findings_out.sort(key=lambda d: d["fdr_adjusted_p_value"])
+
+    n_raw_sig = sum(1 for d in findings_out if d["raw_significant"])
+    n_fdr_sig = sum(reject)
+    by_kind = {}
+    for d in findings_out:
+        by_kind.setdefault(d["kind"], {"total": 0, "raw_sig": 0, "fdr_sig": 0})
+        by_kind[d["kind"]]["total"] += 1
+        by_kind[d["kind"]]["raw_sig"] += d["raw_significant"]
+        by_kind[d["kind"]]["fdr_sig"] += d["fdr_significant"]
+
+    output = {
+        "tree_generated_at": tree["generated_at"],
+        "speed": speed,
+        "window": "discovery",
+        "discovery_range": tree["windows"]["discovery"],
+        "rating_bands": rating_bands,
+        "min_sample_size": args.min_games,
+        "alpha": args.alpha,
+        "n_boot": args.n_boot,
+        "nodes_analyzed": len(nodes),
+        "total_comparisons": len(findings_out),
+        "raw_significant_count": n_raw_sig,
+        "fdr_significant_count": n_fdr_sig,
+        "by_kind": by_kind,
+        "findings": findings_out,
+    }
+
+    out_path = Path(args.json_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2)
+
+    print(
+        f"{len(findings_out)} comparisons: {n_raw_sig} raw-significant (p<{args.alpha}), "
+        f"{n_fdr_sig} FDR-significant after BH correction ({n_raw_sig - n_fdr_sig} raw-significant "
+        f"findings did NOT survive multiple-comparisons correction).\n"
+        f"By kind: {json.dumps(by_kind)}\n"
+        f"Wrote {out_path}.",
         file=sys.stderr,
     )
     return 0
