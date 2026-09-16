@@ -1,8 +1,9 @@
 import json
 
+import requests
 import responses
 
-from opening_divergence.client import ExplorerAuthError, ExplorerClient
+from opening_divergence.client import ExplorerAuthError, ExplorerClient, ExplorerError
 
 
 def test_query_raises_auth_error_without_token(tmp_path, monkeypatch):
@@ -98,3 +99,39 @@ def test_query_retries_on_429_then_succeeds(tmp_path):
     result = client.query("lichess", {"play": "e2e4"})
     assert result == payload
     assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_query_retries_on_dropped_connection_then_succeeds(tmp_path, monkeypatch):
+    # Regression test: a live multi-hour collection run crashed on an
+    # unhandled requests.exceptions.ConnectionError (RemoteDisconnected) --
+    # only HTTP-level 429/5xx were retried, not transport-level failures.
+    monkeypatch.setattr("opening_divergence.client.time.sleep", lambda _seconds: None)
+    payload = {"white": 1, "draws": 1, "black": 1, "moves": []}
+    responses.add(
+        responses.GET,
+        "https://explorer.lichess.org/lichess",
+        body=requests.exceptions.ConnectionError("Remote end closed connection without response"),
+    )
+    responses.add(responses.GET, "https://explorer.lichess.org/lichess", json=payload, status=200)
+    client = ExplorerClient(token="t", cache_dir=tmp_path, min_interval=0)
+    result = client.query("lichess", {"play": "e2e4"})
+    assert result == payload
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_query_gives_up_after_max_retries_on_repeated_connection_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr("opening_divergence.client.time.sleep", lambda _seconds: None)
+    responses.add(
+        responses.GET,
+        "https://explorer.lichess.org/lichess",
+        body=requests.exceptions.ConnectionError("boom"),
+    )
+    client = ExplorerClient(token="t", cache_dir=tmp_path, min_interval=0, max_retries=2)
+    try:
+        client.query("lichess", {"play": "e2e4"})
+        assert False, "expected ExplorerError"
+    except ExplorerError:
+        pass
+    assert len(responses.calls) == 3  # initial attempt + 2 retries

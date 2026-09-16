@@ -119,7 +119,21 @@ class ExplorerClient:
         attempt = 0
         while True:
             self._throttle()
-            response = self.session.get(url, params=dict(params), headers=self._headers(), timeout=30)
+            try:
+                response = self.session.get(url, params=dict(params), headers=self._headers(), timeout=30)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                # Transient network failures (dropped connections, DNS blips) are
+                # indistinguishable from a slow/overloaded server here, so they get
+                # the same backoff-and-retry treatment as a 5xx rather than crashing
+                # a multi-hour collection run over a single blip.
+                self._last_request_monotonic = time.monotonic()
+                attempt += 1
+                if attempt > self.max_retries:
+                    raise ExplorerError(
+                        f"Giving up on {url} after {attempt} attempts (last error: {exc!r})."
+                    ) from exc
+                time.sleep(min(60.0, 2.0**attempt))
+                continue
             self._last_request_monotonic = time.monotonic()
             self.requests_made += 1
 
