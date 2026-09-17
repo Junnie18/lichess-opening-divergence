@@ -17,10 +17,19 @@ discovery-window analysis across a grid of:
     continuously perturbed
 
 and reports, for the baseline run's headline (FDR-significant) findings,
-how many of the 3x3=9 grid cells they remain FDR-significant in. A finding
-that's significant at all 9 combinations is robust; one significant at
-only 1-2 is fragile and should be flagged as such rather than presented
-as equally solid.
+how many of the 3 min-sample-size multipliers (at the baseline "extreme"
+band span) they remain FDR-significant across. Note the two axes are NOT
+symmetric: a Finding's identity (see divergence.py's Finding.key()) bakes
+in the literal band_a/band_b values it was computed from, and rating
+bands are fixed categorical buckets -- so a finding computed at bands
+1000/2500 can never be "the same finding" as one computed at 1200/2200.
+That makes a 9/9 ("significant in every band-span x min-n combination")
+ceiling structurally unreachable by construction, not a robustness
+result -- so this script instead reports min-n robustness (max 3/3,
+holding the baseline band span fixed) per finding, and separately reports
+how the total number of significant comparisons varies by band span
+(informational -- narrower spans mechanically produce more/different
+comparisons, not the same comparisons re-tested).
 
 Note: this grid's "baseline" cell (min_n multiplier=1x, extreme bands) is
 its own self-contained rerun with rating_bands restricted to exactly the
@@ -100,10 +109,12 @@ def main() -> int:
 
     baseline_cell_key = f"min_n_x1.0={baseline_min_n} | extreme (1000/2500)"
     baseline_keys = grid[baseline_cell_key]["_keys"]
+    same_span_cells = [c for k, c in grid.items() if k.endswith("extreme (1000/2500)")]
+    max_achievable = len(same_span_cells)  # 3: band identity is span-specific by construction
 
     stability = []
     for key in sorted(baseline_keys, key=str):
-        n_cells_significant = sum(1 for cell in grid.values() if key in cell["_keys"])
+        n_cells_significant = sum(1 for cell in same_span_cells if key in cell["_keys"])
         kind, path_uci, speed_, band_a, band_b, a_uci, b_uci = key
         stability.append(
             {
@@ -113,14 +124,19 @@ def main() -> int:
                 "band_b": band_b,
                 "a_uci": a_uci,
                 "b_uci": b_uci,
-                "n_grid_cells_significant_out_of_9": n_cells_significant,
-                "robust": n_cells_significant == 9,
+                "n_min_n_cells_significant_out_of_3": n_cells_significant,
+                "robust_to_min_n": n_cells_significant == max_achievable,
             }
         )
-    stability.sort(key=lambda s: s["n_grid_cells_significant_out_of_9"])
+    stability.sort(key=lambda s: s["n_min_n_cells_significant_out_of_3"])
 
-    n_robust = sum(1 for s in stability if s["robust"])
+    n_robust = sum(1 for s in stability if s["robust_to_min_n"])
     n_fragile = len(stability) - n_robust
+
+    band_span_counts = {
+        span_label: grid[f"min_n_x1.0={baseline_min_n} | {span_label}"]["n_significant"]
+        for span_label in BAND_SPANS
+    }
 
     grid_out = {k: {kk: vv for kk, vv in v.items() if kk != "_keys"} for k, v in grid.items()}
     output = {
@@ -130,9 +146,20 @@ def main() -> int:
         "band_spans": BAND_SPANS,
         "grid": grid_out,
         "n_baseline_headline_findings": len(baseline_keys),
-        "n_robust_across_all_9_cells": n_robust,
-        "n_fragile": n_fragile,
+        "max_achievable_min_n_robustness": max_achievable,
+        "n_robust_to_min_n_choice": n_robust,
+        "n_fragile_to_min_n_choice": n_fragile,
+        "n_significant_by_band_span_at_baseline_min_n": band_span_counts,
         "stability": stability,
+        "note": (
+            "'robust' here means significant across all 3 min-n multipliers at the fixed "
+            "baseline band span (1000/2500) -- NOT across band-span choice too. Band spans "
+            "use disjoint literal rating bands (categorical buckets), so a finding computed "
+            "at one span is never the 'same finding' as one at another span; "
+            "n_significant_by_band_span_at_baseline_min_n instead reports how the total "
+            "count of significant comparisons differs by band span, as a separate, "
+            "non-per-finding signal."
+        ),
     }
 
     out_path = Path(args.json_out)
@@ -142,8 +169,9 @@ def main() -> int:
 
     print(
         f"\nBaseline (min_n={baseline_min_n}, bands=1000/2500): {len(baseline_keys)} headline findings.\n"
-        f"Robust (significant in all 9 grid cells): {n_robust}\n"
-        f"Fragile (significant in baseline but not all cells): {n_fragile}\n"
+        f"Robust to min-n choice (significant at 0.5x/1x/2x, same band span): {n_robust}\n"
+        f"Fragile to min-n choice: {n_fragile}\n"
+        f"Significant-comparison counts by band span (min_n=1x): {band_span_counts}\n"
         f"Wrote {out_path}.",
         file=sys.stderr,
     )

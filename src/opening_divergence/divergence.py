@@ -104,6 +104,15 @@ def best_move_shift_findings(
         if low_uci not in band_moves or high_uci not in band_moves:
             continue
         a_d, b_d = band_moves[low_uci], band_moves[high_uci]
+        if a_d["total"] < min_n or b_d["total"] < min_n:
+            # Confidence at low_band/high_band doesn't imply confidence at the
+            # OTHER band being evaluated here -- a move can be well-sampled where
+            # it's popular and barely played (n=1) where it isn't. Un-gated, the
+            # bootstrap's resampled-from-the-MLE-outcome CI degenerates toward
+            # zero width as n->1 (it has nothing to resample variation from),
+            # producing spuriously "significant" findings. See popularity_gap/
+            # master_theory below, which already gate both sides this way.
+            continue
         boot = bootstrap_score_difference(
             _outcome_from_dict(a_d), _outcome_from_dict(b_d), n_boot=n_boot, seed=seed
         )

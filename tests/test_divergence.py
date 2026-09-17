@@ -71,6 +71,31 @@ def test_best_move_shift_detects_divergence_with_bootstrap_p_values():
     assert all(f.raw_p_value < 0.01 for f in findings)
 
 
+def test_best_move_shift_requires_min_n_on_both_sides_at_eval_band():
+    # Each move is confidently "best" at its OWN band (n=10000 there), but
+    # niche_good has only 1 game at the 2500 band -- that shouldn't be enough
+    # to trust a bootstrap comparison evaluated at 2500, even though it clears
+    # min_n at 1000. Regression test for a bug where cross-band evaluation
+    # didn't re-check min_n at the band actually being evaluated.
+    node = make_node(
+        "1. e4 e5",
+        ["e2e4", "e7e5"],
+        {
+            "1000": {
+                "popular_bad": move("PopularBad", 3000, 1000, 6000),  # score .35, n=10000
+                "niche_good": move("NicheGood", 6000, 2000, 2000),  # score .70, n=10000
+            },
+            "2500": {
+                "popular_bad": move("PopularBad", 7000, 1000, 2000),  # score .75, n=10000
+                "niche_good": move("NicheGood", 1, 0, 0),  # score 1.0, n=1 -- too small to trust
+            },
+        },
+    )
+    findings = best_move_shift_findings(node, RATING_BANDS, min_n=30, speed=SPEED, window=WINDOW)
+    assert len(findings) == 1
+    assert findings[0].detail["evaluated_at"] == "1000"
+
+
 def test_best_move_shift_empty_when_same_move_wins_everywhere():
     node = make_node(
         "1. d4 d5",
