@@ -3,9 +3,25 @@
 Uses the [Lichess Opening Explorer API](https://lichess.org/api#tag/Opening-Explorer)
 to measure how the empirically best chess opening reply changes across
 rating bands, with out-of-sample validation, multiple-comparisons
-correction, and adversarial self-checks — not just point estimates. See
-`docs/findings.md` for the full research write-up (methodology, results
-with confidence intervals, robustness checks, limitations).
+correction, and adversarial self-checks — not just point estimates.
+
+📄 **[Read the write-up: "Your Opening Theory Is Rated 2500. You Are
+Not."](docs/article.md)** — the plain-language version, with real charts
+and worked examples.
+
+> I queried the Lichess Opening Explorer API roughly 14,000 times to test
+> whether a chess opening's textbook reputation actually matches how it
+> scores at different skill levels. Across 408 opening positions and 2,837
+> statistical comparisons, 2,410 divergences survived multiple-comparisons
+> correction, and 87.6% of those replicated against a held-out validation
+> window I never looked at while building the model. The pipeline also
+> passed its own null-hypothesis calibration check, and one real bug got
+> caught and fixed along the way. Code, raw JSON, and the full technical
+> writeup are public.
+
+See `docs/findings.md` for the full technical research write-up
+(methodology, results with confidence intervals, robustness checks,
+limitations) — the article above is additive, not a replacement.
 
 ## Setup
 
